@@ -1,0 +1,23 @@
+# 构建产物
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# 配置文件（含数据库密码等敏感信息，不推送）
+src/main/resources/application.yml
+src/main/resources/application-*.yml
+src/main/resources/application-*.properties
+
+# 日志
+*.log
+logs/
+
+# 系统文件
+.DS_Store
+Thumbs.db
