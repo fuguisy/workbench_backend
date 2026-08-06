@@ -254,6 +254,20 @@ CREATE TABLE IF NOT EXISTS checkin (
     deleted TINYINT DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='打卡记录表';
 
+-- 打卡明细表（每次打卡一条记录，习惯维度）
+CREATE TABLE IF NOT EXISTS checkin_record (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    habit_id BIGINT NOT NULL COMMENT '习惯id，关联checkin.id',
+    check_date DATE NOT NULL COMMENT '打卡日期',
+    note VARCHAR(500) COMMENT '打卡备注',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    UNIQUE KEY uk_user_habit_date (user_id, habit_id, check_date),
+    INDEX idx_habit_date (habit_id, check_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='打卡明细表';
+
 -- -----------------------------------------------------------
 -- 15. 密码秘钥表
 -- -----------------------------------------------------------
@@ -324,6 +338,21 @@ CREATE TABLE IF NOT EXISTS markdown_doc (
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted TINYINT DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Markdown文档管理表';
+
+-- -----------------------------------------------------------
+-- 19. 文档分类树表（支持无限层级）
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS doc_category (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    parent_id BIGINT DEFAULT 0 COMMENT '父节点id，0表示根节点',
+    name VARCHAR(100) NOT NULL COMMENT '分类名称',
+    sort INT DEFAULT 0 COMMENT '同级排序，越小越靠前',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_parent (user_id, parent_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档分类树表';
 
 -- -----------------------------------------------------------
 -- 默认管理员由 DataInitializer 在应用启动时自动创建
