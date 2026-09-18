@@ -36,6 +36,33 @@ public class InsightStatsVO {
     // 自媒体产出统计
     private MediaStats mediaStats;
 
+    // ===== 新增字段 =====
+    // 本周专注总小时
+    private BigDecimal focusHoursThisWeek;
+    // 环比上周%
+    private Integer focusHoursMomPct;
+    // 本周完成率%
+    private Integer todoDoneRate;
+    // 本周延期数量
+    private Integer todoOverdueCount;
+    // 本周产出总篇数=docs+markdown+media+mediaboard本周新
+    private Integer contentOutputThisWeek;
+    // 公众号/视频/小红书
+    private Map<String, Integer> contentBreakdown;
+    // 长度5的柱0-100
+    private List<Integer> barsFocus;
+    private List<Integer> barsTodo;
+    private List<Integer> barsContent;
+
+    // 5条洞察
+    private List<InsightItem> insights;
+
+    // 周期对比：FOCUS/TODO_RATE/CONTENT
+    private List<CompareWeek> compares;
+
+    // 下周行动项
+    private List<NextAction> nextActions;
+
     @Data
     @Builder
     @NoArgsConstructor
@@ -106,5 +133,38 @@ public class InsightStatsVO {
         private Long mediaCount;    // 素材库
         private Long docsCount;     // 稿件
         private Long boardCount;    // 运营数据
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class InsightItem {
+        private String title;
+        private String desc;
+        private String tag;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CompareWeek {
+        private String key;         // FOCUS / TODO_RATE / CONTENT
+        private Integer last;       // 上周%
+        private Integer cur;        // 本周%
+        private String delta;       // 变化描述
+        private String deltaColor;  // green / red / gray
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class NextAction {
+        private Long id;
+        private String title;
+        private String role;        // DEV | PERSONAL | CREATE
+        private Boolean done;
     }
 }

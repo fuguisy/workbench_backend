@@ -25,5 +25,6 @@ public class BaseEntity implements Serializable {
     private LocalDateTime updateTime;
 
     @TableLogic
+    @TableField(value = "`deleted`")
     private Integer deleted;
 }

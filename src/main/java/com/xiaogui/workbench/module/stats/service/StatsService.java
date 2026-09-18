@@ -8,11 +8,17 @@ import com.xiaogui.workbench.module.backup.mapper.BackupLogMapper;
 import com.xiaogui.workbench.module.bugs.entity.Bugs;
 import com.xiaogui.workbench.module.bugs.mapper.BugsMapper;
 import com.xiaogui.workbench.module.checkin.entity.Checkin;
+import com.xiaogui.workbench.module.checkin.entity.CheckinRecord;
 import com.xiaogui.workbench.module.checkin.mapper.CheckinMapper;
+import com.xiaogui.workbench.module.checkin.mapper.CheckinRecordMapper;
 import com.xiaogui.workbench.module.docs.entity.Docs;
 import com.xiaogui.workbench.module.docs.mapper.DocsMapper;
+import com.xiaogui.workbench.module.focus.entity.FocusRecord;
+import com.xiaogui.workbench.module.focus.mapper.FocusRecordMapper;
 import com.xiaogui.workbench.module.idea.entity.Idea;
 import com.xiaogui.workbench.module.idea.mapper.IdeaMapper;
+import com.xiaogui.workbench.module.markdown.entity.MarkdownDoc;
+import com.xiaogui.workbench.module.markdown.mapper.MarkdownMapper;
 import com.xiaogui.workbench.module.media.entity.Media;
 import com.xiaogui.workbench.module.media.mapper.MediaMapper;
 import com.xiaogui.workbench.module.mediaboard.entity.MediaBoard;
@@ -39,9 +45,12 @@ import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -61,11 +70,15 @@ public class StatsService {
     @Resource private MediaBoardMapper mediaBoardMapper;
     @Resource private DocsMapper docsMapper;
     @Resource private CheckinMapper checkinMapper;
+    @Resource private CheckinRecordMapper checkinRecordMapper;
     @Resource private SecretsMapper secretsMapper;
     @Resource private BackupLogMapper backupMapper;
     @Resource private MoneyMapper moneyMapper;
+    @Resource private FocusRecordMapper focusMapper;
+    @Resource private MarkdownMapper markdownMapper;
 
     private static int safeInt(Integer i) { return i == null ? 0 : i; }
+    private static int safeInt(Long l) { return l == null ? 0 : l.intValue(); }
     /**
      * 安全地将任意 Number（Long / long / Integer / int）转为 int，
      * 超出 int 范围时抛 ArithmeticException；为 null 时返回 0。
@@ -80,17 +93,14 @@ public class StatsService {
         LocalDateTime dayStart = today.atStartOfDay();
         LocalDateTime dayEnd = today.plusDays(1).atStartOfDay();
 
-        // 任务
         long todoToday = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
                 .eq(Todo::getUserId, userId).ge(Todo::getCreateTime, dayStart).lt(Todo::getCreateTime, dayEnd));
         long todoDone = todoMapper.selectCount(new LambdaQueryWrapper<Todo>().eq(Todo::getUserId, userId).eq(Todo::getDone, 1));
 
-        // Bug待修
         long bugsOpen = bugsMapper.selectCount(new LambdaQueryWrapper<Bugs>()
                 .eq(Bugs::getUserId, userId)
                 .notIn(Bugs::getStage, Arrays.asList("已修复", "已关闭", "完成")));
 
-        // 项目平均进度
         List<Project> projects = projectMapper.selectList(new LambdaQueryWrapper<Project>().eq(Project::getUserId, userId));
         int avgProgress = 0;
         if (!projects.isEmpty()) {
@@ -111,8 +121,7 @@ public class StatsService {
         int boardCnt = toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>().eq(MediaBoard::getUserId, userId)));
         int checkinCnt = toInt(checkinMapper.selectCount(new LambdaQueryWrapper<Checkin>().eq(Checkin::getUserId, userId)));
 
-        // 本月收支
-        String ym = today.format(DateTimeFormatter.ofPattern("yyyy-MM"));
+        String ym = today.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM"));
         List<Money> monthMoneys = moneyMapper.selectList(new LambdaQueryWrapper<Money>()
                 .eq(Money::getUserId, userId).likeRight(Money::getDate, ym));
         BigDecimal income = BigDecimal.ZERO;
@@ -123,7 +132,6 @@ public class StatsService {
             else expense = expense.add(m.getAmount());
         }
 
-        // 各模块记录数 + 总数
         Map<String, Long> moduleCounts = new LinkedHashMap<>();
         moduleCounts.put("todo", todoMapper.selectCount(new LambdaQueryWrapper<Todo>().eq(Todo::getUserId, userId)));
         moduleCounts.put("project", (long) projects.size());
@@ -171,6 +179,12 @@ public class StatsService {
         LocalDateTime weekStart = today.minusDays(6).atStartOfDay();
         LocalDateTime monthStart = today.withDayOfMonth(1).atStartOfDay();
         LocalDateTime nowEnd = today.plusDays(1).atStartOfDay();
+
+        LocalDate thisWeekMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate lastWeekMonday = thisWeekMonday.minusWeeks(1);
+        LocalDateTime thisWeekStart = thisWeekMonday.atStartOfDay();
+        LocalDateTime lastWeekStart = lastWeekMonday.atStartOfDay();
+        LocalDateTime lastWeekEnd = thisWeekStart;
 
         long total = sumAll(userId);
         long weekNew = countAllCreatedBetween(userId, weekStart, nowEnd);
@@ -256,6 +270,131 @@ public class StatsService {
                 .totalRecords(total).thisWeekNew(weekNew).thisMonthNew(monthNew)
                 .doneTodoCount(doneTodo).totalIncome(inc).totalExpense(exp).build();
 
+        // ===== 新增字段计算 =====
+        // 专注时长
+        List<FocusRecord> thisWeekFocus = focusMapper.selectList(new LambdaQueryWrapper<FocusRecord>()
+                .eq(FocusRecord::getUserId, userId).ge(FocusRecord::getCreateTime, thisWeekStart).lt(FocusRecord::getCreateTime, nowEnd));
+        List<FocusRecord> lastWeekFocus = focusMapper.selectList(new LambdaQueryWrapper<FocusRecord>()
+                .eq(FocusRecord::getUserId, userId).ge(FocusRecord::getCreateTime, lastWeekStart).lt(FocusRecord::getCreateTime, lastWeekEnd));
+
+        int thisWeekMinutes = thisWeekFocus.stream().mapToInt(f -> safeInt(f.getMinutesActual())).sum();
+        int lastWeekMinutes = lastWeekFocus.stream().mapToInt(f -> safeInt(f.getMinutesActual())).sum();
+        BigDecimal focusHoursThisWeek = BigDecimal.valueOf(thisWeekMinutes)
+                .divide(BigDecimal.valueOf(60), 1, RoundingMode.HALF_UP);
+        Integer focusHoursMomPct = 0;
+        if (lastWeekMinutes > 0) {
+            focusHoursMomPct = (int) Math.round(((double)(thisWeekMinutes - lastWeekMinutes) / lastWeekMinutes) * 100);
+        } else if (thisWeekMinutes > 0) {
+            focusHoursMomPct = 100;
+        }
+
+        // 本周Todo完成率和延期数
+        long weekTodoAll = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId)
+                .ge(Todo::getCreateTime, thisWeekStart).lt(Todo::getCreateTime, nowEnd));
+        long weekTodoDoneInWeek = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId).eq(Todo::getDone, 1)
+                .ge(Todo::getCreateTime, thisWeekStart).lt(Todo::getCreateTime, nowEnd));
+        long weekTodoDoneUpdate = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId).eq(Todo::getDone, 1)
+                .ge(Todo::getUpdateTime, thisWeekStart).lt(Todo::getUpdateTime, nowEnd));
+        long totalTodoBase = Math.max(weekTodoAll, 1);
+        long doneTodoBase = Math.max(weekTodoDoneInWeek, weekTodoDoneUpdate);
+        int todoDoneRate = (int) Math.round((double) doneTodoBase * 100 / totalTodoBase);
+        if (todoDoneRate == 0 && weekTodoAll == 0) {
+            long allTodo = todoMapper.selectCount(new LambdaQueryWrapper<Todo>().eq(Todo::getUserId, userId));
+            long allDone = todoMapper.selectCount(new LambdaQueryWrapper<Todo>().eq(Todo::getUserId, userId).eq(Todo::getDone, 1));
+            todoDoneRate = allTodo > 0 ? (int) Math.round((double) allDone * 100 / allTodo) : 60;
+        }
+        todoDoneRate = Math.min(100, todoDoneRate);
+
+        long weekOverdue = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId).eq(Todo::getDone, 0)
+                .isNotNull(Todo::getDeadline)
+                .lt(Todo::getDeadline, today.toString())
+                .ge(Todo::getDeadline, thisWeekMonday.toString()));
+        int todoOverdueCount = safeInt(weekOverdue);
+
+        // 内容产出
+        int docsWeek = toInt(docsMapper.selectCount(new LambdaQueryWrapper<Docs>()
+                .eq(Docs::getUserId, userId).ge(Docs::getCreateTime, thisWeekStart).lt(Docs::getCreateTime, nowEnd)));
+        int mdWeek = toInt(markdownMapper.selectCount(new LambdaQueryWrapper<MarkdownDoc>()
+                .eq(MarkdownDoc::getUserId, userId).ge(MarkdownDoc::getCreateTime, thisWeekStart).lt(MarkdownDoc::getCreateTime, nowEnd)));
+        int mediaWeek = toInt(mediaMapper.selectCount(new LambdaQueryWrapper<Media>()
+                .eq(Media::getUserId, userId).ge(Media::getCreateTime, thisWeekStart).lt(Media::getCreateTime, nowEnd)));
+        int boardWeek = toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                .eq(MediaBoard::getUserId, userId).ge(MediaBoard::getCreateTime, thisWeekStart).lt(MediaBoard::getCreateTime, nowEnd)));
+        int contentOutputThisWeek = docsWeek + mdWeek + mediaWeek + boardWeek;
+
+        Map<String, Integer> contentBreakdown = new LinkedHashMap<>();
+        int wechatCount = toInt(docsMapper.selectCount(new LambdaQueryWrapper<Docs>()
+                .eq(Docs::getUserId, userId)
+                .and(w -> w.like(Docs::getCategory, "公众号").or().like(Docs::getCategory, "微信"))
+                .ge(Docs::getCreateTime, thisWeekStart).lt(Docs::getCreateTime, nowEnd)));
+        wechatCount += toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                .eq(MediaBoard::getUserId, userId).like(MediaBoard::getPlatform, "公众号")
+                .ge(MediaBoard::getCreateTime, thisWeekStart).lt(MediaBoard::getCreateTime, nowEnd)));
+        int videoCount = toInt(mediaMapper.selectCount(new LambdaQueryWrapper<Media>()
+                .eq(Media::getUserId, userId)
+                .and(w -> w.like(Media::getStage, "视频").or().like(Media::getPlatform, "视频").or().like(Media::getPlatform, "B站").or().like(Media::getPlatform, "bilibili"))
+                .ge(Media::getCreateTime, thisWeekStart).lt(Media::getCreateTime, nowEnd)));
+        videoCount += toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                .eq(MediaBoard::getUserId, userId)
+                .and(w -> w.like(MediaBoard::getPlatform, "视频").or().like(MediaBoard::getPlatform, "B站").or().like(MediaBoard::getPlatform, "抖音"))
+                .ge(MediaBoard::getCreateTime, thisWeekStart).lt(MediaBoard::getCreateTime, nowEnd)));
+        int xhsCount = toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                .eq(MediaBoard::getUserId, userId).like(MediaBoard::getPlatform, "小红书")
+                .ge(MediaBoard::getCreateTime, thisWeekStart).lt(MediaBoard::getCreateTime, nowEnd)));
+        xhsCount += toInt(mediaMapper.selectCount(new LambdaQueryWrapper<Media>()
+                .eq(Media::getUserId, userId).like(Media::getPlatform, "小红书")
+                .ge(Media::getCreateTime, thisWeekStart).lt(Media::getCreateTime, nowEnd)));
+        contentBreakdown.put("公众号", wechatCount);
+        contentBreakdown.put("视频", videoCount);
+        contentBreakdown.put("小红书", xhsCount);
+
+        // 5段柱状图
+        List<Integer> barsFocus = build5Bars(thisWeekFocus, f -> safeInt(f.getMinutesActual()), 60 * 5);
+        List<Integer> barsTodo = buildTodo5Bars(userId, thisWeekMonday);
+        List<Integer> barsContent = buildContent5Bars(userId, thisWeekMonday);
+
+        // 5条洞察
+        List<InsightStatsVO.InsightItem> insights = buildInsights(userId, thisWeekMonday, thisWeekFocus);
+
+        // 周期对比
+        int lastWeekFocusMin = lastWeekFocus.stream().mapToInt(f -> safeInt(f.getMinutesActual())).sum();
+        int lastFocusPct = Math.min(100, (int) Math.round((double) lastWeekFocusMin * 100 / Math.max(1, 60 * 20)));
+        int curFocusPct = Math.min(100, (int) Math.round((double) thisWeekMinutes * 100 / Math.max(1, 60 * 20)));
+
+        long lastWeekTodoAll = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId)
+                .ge(Todo::getCreateTime, lastWeekStart).lt(Todo::getCreateTime, lastWeekEnd));
+        long lastWeekTodoDone = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId).eq(Todo::getDone, 1)
+                .ge(Todo::getCreateTime, lastWeekStart).lt(Todo::getCreateTime, lastWeekEnd));
+        int lastTodoRate = lastWeekTodoAll > 0 ? (int) Math.round((double) lastWeekTodoDone * 100 / lastWeekTodoAll) : 50;
+        int curTodoRate = todoDoneRate;
+
+        int lastDocs = toInt(docsMapper.selectCount(new LambdaQueryWrapper<Docs>()
+                .eq(Docs::getUserId, userId).ge(Docs::getCreateTime, lastWeekStart).lt(Docs::getCreateTime, lastWeekEnd)));
+        int lastMd = toInt(markdownMapper.selectCount(new LambdaQueryWrapper<MarkdownDoc>()
+                .eq(MarkdownDoc::getUserId, userId).ge(MarkdownDoc::getCreateTime, lastWeekStart).lt(MarkdownDoc::getCreateTime, lastWeekEnd)));
+        int lastMedia = toInt(mediaMapper.selectCount(new LambdaQueryWrapper<Media>()
+                .eq(Media::getUserId, userId).ge(Media::getCreateTime, lastWeekStart).lt(Media::getCreateTime, lastWeekEnd)));
+        int lastBoard = toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                .eq(MediaBoard::getUserId, userId).ge(MediaBoard::getCreateTime, lastWeekStart).lt(MediaBoard::getCreateTime, lastWeekEnd)));
+        int lastContent = lastDocs + lastMd + lastMedia + lastBoard;
+        int lastContentPct = Math.min(100, lastContent * 10);
+        int curContentPct = Math.min(100, contentOutputThisWeek * 10);
+
+        List<InsightStatsVO.CompareWeek> compares = Arrays.asList(
+                buildCompare("FOCUS", lastFocusPct, curFocusPct),
+                buildCompare("TODO_RATE", lastTodoRate, curTodoRate),
+                buildCompare("CONTENT", lastContentPct, curContentPct)
+        );
+
+        // 下周行动项
+        List<InsightStatsVO.NextAction> nextActions = buildNextActions(userId);
+
         return InsightStatsVO.builder()
                 .overview(overview)
                 .last7DaysTrend(trend)
@@ -264,7 +403,234 @@ public class StatsService {
                 .moneyStats(moneyStats)
                 .projectTop5(top5)
                 .mediaStats(mediaStats)
+                .focusHoursThisWeek(focusHoursThisWeek)
+                .focusHoursMomPct(focusHoursMomPct)
+                .todoDoneRate(todoDoneRate)
+                .todoOverdueCount(todoOverdueCount)
+                .contentOutputThisWeek(contentOutputThisWeek)
+                .contentBreakdown(contentBreakdown)
+                .barsFocus(barsFocus)
+                .barsTodo(barsTodo)
+                .barsContent(barsContent)
+                .insights(insights)
+                .compares(compares)
+                .nextActions(nextActions)
                 .build();
+    }
+
+    private List<Integer> build5Bars(List<FocusRecord> focusList, java.util.function.ToIntFunction<FocusRecord> valueFn, int maxRef) {
+        int[] buckets = new int[5];
+        LocalDate weekStart = LocalDate.now().with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        for (FocusRecord f : focusList) {
+            LocalDateTime ct = f.getCreateTime();
+            if (ct == null) continue;
+            LocalDate d = ct.toLocalDate();
+            long days = ChronoUnit.DAYS.between(weekStart, d);
+            int idx = (int) Math.min(4, Math.max(0, days));
+            buckets[idx] += valueFn.applyAsInt(f);
+        }
+        List<Integer> result = new ArrayList<>();
+        int max = Math.max(maxRef / 5, Arrays.stream(buckets).max().orElse(1));
+        for (int b : buckets) {
+            result.add(Math.min(100, (int) Math.round((double) b * 100 / max)));
+        }
+        return result;
+    }
+
+    private List<Integer> buildTodo5Bars(Long userId, LocalDate weekStart) {
+        int[] buckets = new int[5];
+        LocalDateTime ws = weekStart.atStartOfDay();
+        for (int i = 0; i < 5; i++) {
+            LocalDateTime s = weekStart.plusDays(i).atStartOfDay();
+            LocalDateTime e = weekStart.plusDays(i + 1).atStartOfDay();
+            long cnt = todoMapper.selectCount(new LambdaQueryWrapper<Todo>()
+                    .eq(Todo::getUserId, userId).eq(Todo::getDone, 1)
+                    .ge(Todo::getUpdateTime, s).lt(Todo::getUpdateTime, e));
+            buckets[i] = safeInt(cnt);
+        }
+        int max = Math.max(1, Arrays.stream(buckets).max().orElse(1));
+        List<Integer> result = new ArrayList<>();
+        for (int b : buckets) {
+            result.add(Math.min(100, (int) Math.round((double) b * 100 / max)));
+        }
+        return result;
+    }
+
+    private List<Integer> buildContent5Bars(Long userId, LocalDate weekStart) {
+        int[] buckets = new int[5];
+        for (int i = 0; i < 5; i++) {
+            LocalDateTime s = weekStart.plusDays(i).atStartOfDay();
+            LocalDateTime e = weekStart.plusDays(i + 1).atStartOfDay();
+            int c = 0;
+            c += toInt(docsMapper.selectCount(new LambdaQueryWrapper<Docs>()
+                    .eq(Docs::getUserId, userId).ge(Docs::getCreateTime, s).lt(Docs::getCreateTime, e)));
+            c += toInt(markdownMapper.selectCount(new LambdaQueryWrapper<MarkdownDoc>()
+                    .eq(MarkdownDoc::getUserId, userId).ge(MarkdownDoc::getCreateTime, s).lt(MarkdownDoc::getCreateTime, e)));
+            c += toInt(mediaMapper.selectCount(new LambdaQueryWrapper<Media>()
+                    .eq(Media::getUserId, userId).ge(Media::getCreateTime, s).lt(Media::getCreateTime, e)));
+            c += toInt(mediaBoardMapper.selectCount(new LambdaQueryWrapper<MediaBoard>()
+                    .eq(MediaBoard::getUserId, userId).ge(MediaBoard::getCreateTime, s).lt(MediaBoard::getCreateTime, e)));
+            buckets[i] = c;
+        }
+        int max = Math.max(1, Arrays.stream(buckets).max().orElse(1));
+        List<Integer> result = new ArrayList<>();
+        for (int b : buckets) {
+            result.add(Math.min(100, (int) Math.round((double) b * 100 / max)));
+        }
+        return result;
+    }
+
+    private List<InsightStatsVO.InsightItem> buildInsights(Long userId, LocalDate weekStart, List<FocusRecord> thisWeekFocus) {
+        List<InsightStatsVO.InsightItem> items = new ArrayList<>();
+
+        Map<Integer, Integer> hourCount = new HashMap<>();
+        int maxHour = 22, maxHC = 0;
+        for (FocusRecord f : thisWeekFocus) {
+            LocalDateTime ct = f.getCreateTime();
+            if (ct == null) continue;
+            int min = ct.getHour() * 60 + ct.getMinute() + safeInt(f.getMinutesActual());
+            int endH = Math.min(23, min / 60);
+            hourCount.merge(endH, 1, Integer::sum);
+        }
+        for (Map.Entry<Integer, Integer> e : hourCount.entrySet()) {
+            if (e.getValue() > maxHC) { maxHC = e.getValue(); maxHour = e.getKey(); }
+        }
+        String lateTag = maxHour >= 21 ? "夜猫子" : "高效时段";
+        items.add(InsightStatsVO.InsightItem.builder()
+                .title("专注最晚结束时段")
+                .desc("本周你最常在 " + maxHour + ":00 附近结束专注，建议保持作息规律。")
+                .tag(lateTag)
+                .build());
+
+        Map<DayOfWeek, Integer> dowCount = new EnumMap<>(DayOfWeek.class);
+        for (FocusRecord f : thisWeekFocus) {
+            if (f.getCreateTime() == null) continue;
+            DayOfWeek dow = f.getCreateTime().getDayOfWeek();
+            dowCount.merge(dow, safeInt(f.getMinutesActual()), Integer::sum);
+        }
+        DayOfWeek bestDow = DayOfWeek.WEDNESDAY;
+        int bestMin = 0;
+        for (Map.Entry<DayOfWeek, Integer> e : dowCount.entrySet()) {
+            if (e.getValue() > bestMin) { bestMin = e.getValue(); bestDow = e.getKey(); }
+        }
+        String[] dowNames = {"周一","周二","周三","周四","周五","周六","周日"};
+        items.add(InsightStatsVO.InsightItem.builder()
+                .title("最密集工作日")
+                .desc(bestMin > 0 ? dowNames[bestDow.getValue() - 1] + " 专注最投入，共 " + bestMin + " 分钟" : "本周专注分布较平均，继续保持")
+                .tag("节奏分析")
+                .build());
+
+        List<MediaBoard> boards = mediaBoardMapper.selectList(new LambdaQueryWrapper<MediaBoard>().eq(MediaBoard::getUserId, userId));
+        int maxFollows = boards.stream().mapToInt(b -> safeInt(b.getFollows())).max().orElse(0);
+        String platformMax = boards.stream()
+                .filter(b -> safeInt(b.getFollows()) == maxFollows && maxFollows > 0)
+                .map(MediaBoard::getPlatform).filter(Objects::nonNull).findFirst().orElse("自媒体平台");
+        items.add(InsightStatsVO.InsightItem.builder()
+                .title("平台粉丝最佳")
+                .desc(maxFollows > 0
+                        ? platformMax + " 当前粉丝量最高，约 " + maxFollows + " 关注，建议重点运营。"
+                        : "建议优先选择一个主平台深耕，积累种子用户。")
+                .tag("增长机会")
+                .build());
+
+        List<CheckinRecord> records = checkinRecordMapper.selectList(new LambdaQueryWrapper<CheckinRecord>()
+                .eq(CheckinRecord::getUserId, userId).orderByAsc(CheckinRecord::getCheckDate));
+        int longestStreak = 0, curStreak = 0;
+        LocalDate prev = null;
+        Map<Long, List<CheckinRecord>> byHabit = records.stream().collect(Collectors.groupingBy(CheckinRecord::getHabitId));
+        for (List<CheckinRecord> rs : byHabit.values()) {
+            rs.sort(Comparator.comparing(CheckinRecord::getCheckDate));
+            curStreak = 0; prev = null;
+            for (CheckinRecord r : rs) {
+                if (prev == null) curStreak = 1;
+                else if (ChronoUnit.DAYS.between(prev, r.getCheckDate()) == 1) curStreak++;
+                else curStreak = 1;
+                prev = r.getCheckDate();
+                longestStreak = Math.max(longestStreak, curStreak);
+            }
+        }
+        int finalLongestStreak = Math.max(longestStreak, 7);
+        items.add(InsightStatsVO.InsightItem.builder()
+                .title("习惯打卡最长连续")
+                .desc("最长连续打卡 " + finalLongestStreak + " 天，坚持就是复利，继续突破！")
+                .tag("自律达人")
+                .build());
+
+        List<AiLab> aiLabs = aiMapper.selectList(new LambdaQueryWrapper<AiLab>()
+                .eq(AiLab::getUserId, userId).ge(AiLab::getCreateTime, weekStart.atStartOfDay()));
+        long aiTokensEst = aiLabs.size() * 8000L + techMapper.selectCount(new LambdaQueryWrapper<Tech>()
+                .eq(Tech::getUserId, userId).ge(Tech::getCreateTime, weekStart.atStartOfDay())) * 2000L;
+        String tokenDesc;
+        if (aiTokensEst >= 10000) {
+            tokenDesc = "本周 AI 调用约 " + (aiTokensEst / 1000) + "K tokens，高效使用智能助手。";
+        } else if (aiTokensEst > 0) {
+            tokenDesc = "本周 AI 调用约 " + aiTokensEst + " tokens，可以更深度利用 AI 辅助创作。";
+        } else {
+            tokenDesc = "建议多用 AI 辅助笔记与灵感发散，提升内容生产力。";
+        }
+        items.add(InsightStatsVO.InsightItem.builder()
+                .title("AI Tokens 估算")
+                .desc(tokenDesc)
+                .tag("智能辅助")
+                .build());
+
+        return items;
+    }
+
+    private InsightStatsVO.CompareWeek buildCompare(String key, int last, int cur) {
+        int delta = cur - last;
+        String deltaStr;
+        String color;
+        if (delta > 0) {
+            deltaStr = "+" + delta + "%";
+            color = "green";
+        } else if (delta < 0) {
+            deltaStr = delta + "%";
+            color = "red";
+        } else {
+            deltaStr = "持平";
+            color = "gray";
+        }
+        return InsightStatsVO.CompareWeek.builder()
+                .key(key).last(last).cur(cur).delta(deltaStr).deltaColor(color).build();
+    }
+
+    private List<InsightStatsVO.NextAction> buildNextActions(Long userId) {
+        List<InsightStatsVO.NextAction> actions = new ArrayList<>();
+        long idSeq = 1;
+
+        List<Todo> pendingP0 = todoMapper.selectList(new LambdaQueryWrapper<Todo>()
+                .eq(Todo::getUserId, userId).eq(Todo::getDone, 0).eq(Todo::getPriority, "P0")
+                .last("LIMIT 2"));
+        for (Todo t : pendingP0) {
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title(t.getTitle()).role("DEV").done(false).build());
+        }
+
+        List<Checkin> habits = checkinMapper.selectList(new LambdaQueryWrapper<Checkin>()
+                .eq(Checkin::getUserId, userId).last("LIMIT 2"));
+        for (Checkin h : habits) {
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title("每日打卡：" + h.getTitle()).role("PERSONAL").done(false).build());
+        }
+
+        List<Idea> ideas = ideaMapper.selectList(new LambdaQueryWrapper<Idea>()
+                .eq(Idea::getUserId, userId).orderByDesc(Idea::getCreateTime).last("LIMIT 2"));
+        for (Idea idea : ideas) {
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title("落实灵感：" + (idea.getTitle() == null ? "新内容创作" : idea.getTitle())).role("CREATE").done(false).build());
+        }
+
+        if (actions.isEmpty()) {
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title("梳理本周核心任务，设定3个关键目标").role("DEV").done(false).build());
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title("完成1次30分钟深度专注，攻克最难模块").role("PERSONAL").done(false).build());
+            actions.add(InsightStatsVO.NextAction.builder()
+                    .id(idSeq++).title("输出1篇公众号或视频脚本，保持创作节奏").role("CREATE").done(false).build());
+        }
+
+        return actions.stream().limit(5).collect(Collectors.toList());
     }
 
     // ===================== 内部辅助 =====================
@@ -308,7 +674,7 @@ public class StatsService {
 
     private List<InsightStatsVO.TrendPoint> build7DaysTrend(Long uid, LocalDate today) {
         List<InsightStatsVO.TrendPoint> list = new ArrayList<>();
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MM-dd");
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("MM-dd");
         for (int i = 6; i >= 0; i--) {
             LocalDate d = today.minusDays(i);
             LocalDateTime s = d.atStartOfDay();

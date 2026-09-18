@@ -355,6 +355,156 @@ CREATE TABLE IF NOT EXISTS doc_category (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档分类树表';
 
 -- -----------------------------------------------------------
+-- 20. 通知中心表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS notification (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200),
+    content TEXT,
+    type VARCHAR(20) COMMENT 'TASK|BUG|DOC|CHECKIN|MONEY|SYSTEM',
+    `read` TINYINT DEFAULT 0 COMMENT '0未读 1已读',
+    extra VARCHAR(500),
+    priority VARCHAR(20),
+    date VARCHAR(20),
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_read (user_id, `read`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知中心表';
+
+-- -----------------------------------------------------------
+-- 21. 日历日程表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS calendar_event (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200),
+    category VARCHAR(20) COMMENT 'WORK|MEDIA|FOCUS|REVIEW|LIFE',
+    location VARCHAR(200),
+    attendees VARCHAR(500),
+    start_time VARCHAR(30),
+    end_time VARCHAR(30),
+    all_day TINYINT DEFAULT 0,
+    priority VARCHAR(20),
+    status VARCHAR(20),
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_start (user_id, start_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='日历日程表';
+
+-- -----------------------------------------------------------
+-- 22. OKR目标表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS okr_objective (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200),
+    category VARCHAR(20) COMMENT 'WORK|MEDIA|TECH|READ|HEALTH',
+    period VARCHAR(30) COMMENT 'Q3_2026|Y2026|MONTH_2026_08',
+    curr_value DECIMAL(10,2) DEFAULT 0,
+    target_value DECIMAL(10,2) DEFAULT 0,
+    unit VARCHAR(20),
+    start_date VARCHAR(20),
+    end_date VARCHAR(20),
+    status VARCHAR(20) COMMENT 'ACTIVE|DONE|ARCHIVED',
+    progress INT DEFAULT 0 COMMENT '进度百分比 0-100（由KR聚合计算）',
+    score DECIMAL(3,1) DEFAULT NULL COMMENT '周期结束0-1打分',
+    review TEXT COMMENT '复盘备注',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_period (user_id, period)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='OKR目标表';
+
+-- -----------------------------------------------------------
+-- 22b. OKR关键结果(KR)表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS okr_key_result (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    objective_id BIGINT NOT NULL COMMENT '所属O目标ID',
+    title VARCHAR(200) NOT NULL COMMENT 'KR标题',
+    curr_value DECIMAL(10,2) DEFAULT 0 COMMENT '当前值',
+    target_value DECIMAL(10,2) DEFAULT 0 COMMENT '目标值',
+    unit VARCHAR(20),
+    progress INT DEFAULT 0 COMMENT '进度百分比 0-100',
+    progress_mode VARCHAR(20) DEFAULT 'MANUAL' COMMENT 'MANUAL|TASK_LINKED',
+    task_id BIGINT DEFAULT NULL COMMENT '关联任务ID（progress_mode=TASK_LINKED时）',
+    weight INT DEFAULT 1 COMMENT '权重（默认1，用于O进度加权计算）',
+    status VARCHAR(20) DEFAULT 'ACTIVE' COMMENT 'ACTIVE|DONE|CANCEL',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_objective (objective_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='OKR关键结果表';
+
+-- -----------------------------------------------------------
+-- 23. 番茄专注记录表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS focus_record (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200),
+    scene VARCHAR(20) COMMENT 'DEEP|CREATE|READ|MEET|SPORT',
+    minutes_actual INT DEFAULT 0,
+    minutes_standard INT DEFAULT 0,
+    pomos_expected INT DEFAULT 0,
+    status VARCHAR(20) COMMENT 'DOING|DONE|CANCEL',
+    record_date VARCHAR(20),
+    task_id BIGINT COMMENT '关联待办任务ID',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_date (user_id, record_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='番茄专注记录表';
+
+-- 23.1 升级脚本：为已有的 focus_record 表添加 task_id 列
+-- ALTER TABLE focus_record ADD COLUMN task_id BIGINT COMMENT '关联待办任务ID' AFTER record_date;
+
+-- -----------------------------------------------------------
+-- 24. 订阅账单表
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS subscription (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200),
+    category VARCHAR(20) COMMENT 'AI|DEV|CLOUD|OFFICE|ENTERTAINMENT',
+    provider VARCHAR(100),
+    plan_type VARCHAR(20) COMMENT 'MONTHLY|YEARLY|ONCE',
+    cost_yuan DECIMAL(10,2) DEFAULT 0,
+    renew_date VARCHAR(20),
+    auto_renew TINYINT DEFAULT 0,
+    status VARCHAR(20) COMMENT 'ACTIVE|EXPIRING|EXPIRED',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_renew (user_id, renew_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订阅账单表';
+
+-- -----------------------------------------------------------
+-- 25. OPC 线索管理表（商机漏斗：新线索→沟通中→已报价→已成交→交付中→已复盘/已流失）
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS opc_lead (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT,
+    title VARCHAR(200) COMMENT '客户/线索名称',
+    source VARCHAR(20) COMMENT '来源：公众号|知乎|B站|朋友介绍|社群|其他',
+    stage VARCHAR(20) DEFAULT '新线索' COMMENT '阶段：新线索|沟通中|已报价|已成交|交付中|已复盘|已流失',
+    contact VARCHAR(100) COMMENT '联系方式',
+    budget DECIMAL(10,2) DEFAULT 0 COMMENT '客户预算(元)',
+    quote DECIMAL(10,2) DEFAULT 0 COMMENT '报价(元)',
+    next_follow VARCHAR(20) COMMENT '下次跟进日期',
+    demand TEXT COMMENT '需求描述',
+    note TEXT COMMENT '跟进记录/备注',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted TINYINT DEFAULT 0,
+    INDEX idx_user_stage (user_id, stage)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='OPC线索管理表';
+
+-- -----------------------------------------------------------
 -- 默认管理员由 DataInitializer 在应用启动时自动创建
 -- 密码: admin123  (BCrypt 实时哈希)
 -- -----------------------------------------------------------
