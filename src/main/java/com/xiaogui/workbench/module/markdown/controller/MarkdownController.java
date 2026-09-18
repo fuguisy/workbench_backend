@@ -6,6 +6,7 @@ import com.xiaogui.workbench.common.PageResult;
 import com.xiaogui.workbench.common.Result;
 import com.xiaogui.workbench.module.markdown.entity.MarkdownDoc;
 import com.xiaogui.workbench.module.markdown.service.MarkdownService;
+import com.xiaogui.workbench.module.markdown.service.MdThemeService;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +25,9 @@ public class MarkdownController {
 
     @Resource
     private MarkdownService service;
+
+    @Resource
+    private MdThemeService mdThemeService;
 
     @GetMapping("/list")
     public Result<List<MarkdownDoc>> list() {
@@ -53,6 +57,23 @@ public class MarkdownController {
     public Result<Void> delete(@PathVariable Long id) {
         service.delete(id);
         return Result.ok();
+    }
+
+    // ========= 排版主题相关接口 =========
+
+    /** 获取所有排版主题列表（key / name / color / desc） */
+    @GetMapping("/themes")
+    public Result<List<Map<String, Object>>> themes() {
+        return Result.ok(mdThemeService.listThemes());
+    }
+
+    /** 将 Markdown 渲染为指定主题的公众号排版 HTML（样式全部 inline，可直接粘贴到公众号编辑器） */
+    @PostMapping("/render")
+    public Result<Map<String, String>> render(@RequestBody Map<String, String> body) {
+        String content = body.getOrDefault("content", "");
+        String theme = body.getOrDefault("theme", "classic");
+        String html = mdThemeService.render(content, theme);
+        return Result.ok(Map.of("html", html));
     }
 
     // ========= 文件处理相关接口 =========
